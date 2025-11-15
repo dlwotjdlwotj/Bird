@@ -9,6 +9,8 @@ public class BirdMovement : MonoBehaviour
     public List<GameObject> obstacles;
     public GameObject goal;
 
+    public float safeDistance = 0.3f;
+
     [Header("Launch Settings")]
     [Tooltip("Maximum distance the bird can be pulled back from the start position.")]
     public float maxDragDistance = 3f;
@@ -237,8 +239,6 @@ public class BirdMovement : MonoBehaviour
             }
         }
 
-        // 안전한 거리 (Collider 반지름)
-        float safeDistance = colliderRadius;
         
         // 충돌한 물체 방향으로 Raycast를 쏴서 안전한 위치 찾기
         Vector2 newPosition = FindSafePosition(contactPoint, collisionNormal, safeDistance, collision.gameObject);
@@ -261,48 +261,12 @@ public class BirdMovement : MonoBehaviour
 
     Vector2 FindSafePosition(Vector2 contactPoint, Vector2 normal, float minDistance, GameObject collisionObject)
     {
-        // 새의 Collider를 일시적으로 비활성화
-        Collider2D birdCollider = GetComponent<Collider2D>();
-        bool wasEnabled = birdCollider != null && birdCollider.enabled;
-        if (birdCollider != null)
-        {
-            birdCollider.enabled = false;
-        }
-
-        // normal 방향(벽에서 멀어지는 방향)으로 안전한 거리 찾기
-        float checkDistance = minDistance;
-        Vector2 testPosition = contactPoint + normal * checkDistance;
+        // 장애물 반대 방향(normal)으로 일정 거리 떨어진 위치에 배치
+        // 충분한 안전 거리 확보 (collider 크기의 2배)
+        float safeDistance = minDistance * 2f;
+        Vector2 safePosition = contactPoint + normal * safeDistance;
         
-        // 최대 20번 반복하여 안전한 위치 찾기
-        for (int i = 0; i < 20; i++)
-        {
-            // testPosition에서 OverlapCircle을 사용하여 충돌 체크
-            Collider2D overlap = Physics2D.OverlapCircle(testPosition, minDistance * 0.8f);
-            
-            // 충돌한 물체가 없거나, 충돌한 물체가 원래 충돌한 물체가 아니면 안전한 위치
-            if (overlap == null || overlap.gameObject != collisionObject)
-            {
-                // 추가 확인: 벽 방향으로 Raycast를 쏴서 충분한 거리가 있는지 확인
-                RaycastHit2D hit = Physics2D.Raycast(testPosition, -normal, minDistance);
-                if (hit.collider == null || hit.collider.gameObject != collisionObject)
-                {
-                    // 안전한 위치 찾음
-                    break;
-                }
-            }
-            
-            // 충돌했으면 더 멀리 이동
-            checkDistance += 0.1f;
-            testPosition = contactPoint + normal * checkDistance;
-        }
-
-        // Collider 복원
-        if (birdCollider != null)
-        {
-            birdCollider.enabled = wasEnabled;
-        }
-
-        return testPosition;
+        return safePosition;
     }
 
     void ResetBirdState()
