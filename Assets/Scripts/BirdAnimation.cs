@@ -33,6 +33,15 @@ public class BirdAnimation : MonoBehaviour
             Debug.LogError("Rigidbody2D component not found on " + gameObject.name);
         }
 
+        // Bird 오브젝트 자체의 스케일 확인
+        Debug.Log($"Bird initial scale: {transform.localScale}");
+        
+        // 만약 스케일이 비정상적으로 작다면 경고
+        if (transform.localScale.x < 0.1f || transform.localScale.y < 0.1f)
+        {
+            Debug.LogWarning($"Bird scale is very small ({transform.localScale}). Consider adjusting it in the Inspector.");
+        }
+
         InitializePrefabs();
     }
 
@@ -50,8 +59,23 @@ public class BirdAnimation : MonoBehaviour
         if (birdCollider == null)
         {
             Debug.LogWarning("Bird has no Collider2D! Adding CircleCollider2D for click detection.");
+            
+            // 프리팹 크기를 기반으로 Collider 크기 계산
+            float radius = 0.5f; // 기본값
+            if (birdStandPrefab != null)
+            {
+                SpriteRenderer prefabRenderer = birdStandPrefab.GetComponentInChildren<SpriteRenderer>();
+                if (prefabRenderer != null && prefabRenderer.sprite != null)
+                {
+                    // 스프라이트의 크기를 기반으로 radius 계산
+                    Bounds bounds = prefabRenderer.sprite.bounds;
+                    radius = Mathf.Max(bounds.size.x, bounds.size.y) * 0.5f;
+                    Debug.Log($"Auto-calculated collider radius: {radius} based on prefab sprite");
+                }
+            }
+            
             CircleCollider2D circleCollider = gameObject.AddComponent<CircleCollider2D>();
-            circleCollider.radius = 0.5f; // 기본 크기, 필요시 Inspector에서 조정 가능
+            circleCollider.radius = radius;
         }
 
         _flyPrefabInstances = new List<GameObject>();
@@ -61,6 +85,7 @@ public class BirdAnimation : MonoBehaviour
         {
             _standPrefabInstance = Instantiate(birdStandPrefab, transform);
             _standPrefabInstance.transform.localPosition = Vector3.zero;
+            _standPrefabInstance.transform.localScale = Vector3.one; // 스케일 리셋
             CleanupPrefabPhysics(_standPrefabInstance);
             _standPrefabInstance.SetActive(true);
             _currentPrefabInstance = _standPrefabInstance;
@@ -79,6 +104,7 @@ public class BirdAnimation : MonoBehaviour
                 {
                     GameObject instance = Instantiate(prefab, transform);
                     instance.transform.localPosition = Vector3.zero;
+                    instance.transform.localScale = Vector3.one; // 스케일 리셋
                     CleanupPrefabPhysics(instance);
                     instance.SetActive(false);
                     _flyPrefabInstances.Add(instance);

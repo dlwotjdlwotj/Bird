@@ -5,7 +5,6 @@ using UnityEngine;
 public class BirdMovement : MonoBehaviour
 {
     [Header("References")]
-    public GameObject floor;
     public List<GameObject> obstacles;
     public GameObject goal;
 
