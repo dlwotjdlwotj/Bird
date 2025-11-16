@@ -18,10 +18,10 @@ public class BirdMovement : MonoBehaviour
     public float launchPower = 5f;
 
     [Header("Visuals")]
-    [Tooltip("Optional LineRenderer used to show the launch direction and power.")]
-    public LineRenderer dragArrow;
+    [Tooltip("Prefab used to show the launch direction and power.")]
+    public GameObject dragArrowPrefab;
     [Tooltip("Multiplier applied to the arrow length relative to the drag distance.")]
-    public float arrowScale = 1f;
+    public float arrowScale = 0.3f;
 
     Vector2 _startPosition, _initialPosition;
     Rigidbody2D _birdRigidbody;
@@ -31,6 +31,8 @@ public class BirdMovement : MonoBehaviour
     bool _isOnFloor;
     bool _isStopped;
     float _stopVelocityThreshold = 0.2f; // 속도가 이 값 이하로 떨어지면 멈춤
+    
+    GameObject _dragArrowInstance;
 
     void Awake()
     {
@@ -48,11 +50,11 @@ public class BirdMovement : MonoBehaviour
         _currentDragPosition = _startPosition;
         SetBirdPhysics(isKinematic: true, resetVelocity: true);
 
-        if (dragArrow != null)
+        // Arrow prefab 인스턴스 생성
+        if (dragArrowPrefab != null)
         {
-            dragArrow.positionCount = 2;
-            dragArrow.useWorldSpace = true;
-            dragArrow.enabled = false;
+            _dragArrowInstance = Instantiate(dragArrowPrefab);
+            _dragArrowInstance.SetActive(false);
         }
     }
 
@@ -141,7 +143,11 @@ public class BirdMovement : MonoBehaviour
         Vector3 pointerWorldPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
         pointerWorldPos.z = 0f;
         Collider2D hit = Physics2D.OverlapPoint(pointerWorldPos);
-        return hit != null && hit.gameObject == gameObject;
+        
+        if (hit == null) return false;
+        
+        // Bird 자체를 클릭했거나, Bird의 자식을 클릭한 경우 true
+        return hit.gameObject == gameObject || hit.transform.IsChildOf(transform);
     }
 
     void SetBirdPhysics(bool isKinematic, bool resetVelocity)
@@ -165,7 +171,7 @@ public class BirdMovement : MonoBehaviour
 
     void UpdateArrow()
     {
-        if (dragArrow == null)
+        if (_dragArrowInstance == null)
         {
             return;
         }
@@ -180,15 +186,27 @@ public class BirdMovement : MonoBehaviour
             Vector2 releaseDirection = _startPosition - _currentDragPosition;
             if (releaseDirection.sqrMagnitude > Mathf.Epsilon)
             {
-                dragArrow.enabled = true;
-                Vector3 start = _startPosition;
-                Vector3 end = _startPosition + releaseDirection.normalized * releaseDirection.magnitude * arrowScale;
-                dragArrow.SetPosition(0, start);
-                dragArrow.SetPosition(1, end);
+                _dragArrowInstance.SetActive(true);
+                
+                // 화살표 크기를 드래그 거리에 비례하여 조정 (Y축으로 늘어남)
+                float distance = releaseDirection.magnitude * arrowScale;
+                _dragArrowInstance.transform.localScale = new Vector3(1f, distance, 1f);
+                
+                // 화살표가 발사 방향을 가리키도록 회전 (위쪽이 기본 방향이므로 -90도 보정)
+                float angle = Mathf.Atan2(releaseDirection.y, releaseDirection.x) * Mathf.Rad2Deg - 90f;
+                _dragArrowInstance.transform.rotation = Quaternion.Euler(0, 0, angle);
+                
+                // 화살표 바닥이 새 위치에 오도록 설정 (화살표 중심을 위로 이동)
+                Vector2 arrowOffset = releaseDirection.normalized * (distance * 0.5f);
+                _dragArrowInstance.transform.position = new Vector3(
+                    _startPosition.x + arrowOffset.x,
+                    _startPosition.y + arrowOffset.y,
+                    0f
+                );
             }
             else
             {
-                dragArrow.enabled = false;
+                _dragArrowInstance.SetActive(false);
             }
         }
         else
@@ -199,9 +217,9 @@ public class BirdMovement : MonoBehaviour
 
     void HideArrow()
     {
-        if (dragArrow != null)
+        if (_dragArrowInstance != null)
         {
-            dragArrow.enabled = false;
+            _dragArrowInstance.SetActive(false);
         }
     }
 
@@ -209,6 +227,13 @@ public class BirdMovement : MonoBehaviour
     {
         GameObject other = collision.gameObject;
         Debug.Log($"[COLLISION] {gameObject.name} collided with {other.name}");
+
+        // 자식 오브젝트와의 충돌은 무시 (애니메이션 프리팹)
+        if (other.transform.IsChildOf(transform))
+        {
+            Debug.Log("BirdMovement: Collision with child object - Ignoring");
+            return;
+        }
 
         // goal와 충돌 - 성공
         if (goal != null && other == goal)
@@ -227,11 +252,23 @@ public class BirdMovement : MonoBehaviour
         }
 
         // Obstacle 리스트에 있는 오브젝트와 충돌 - 즉시 멈춤 (기존 호환성)
-        if (obstacles != null && obstacles.Contains(other))
+        if (obstacles != null)
         {
-            Debug.Log("BirdMovement: Hit obstacle - Stopping immediately!");
-            StopBirdImmediately();
-            return;
+            // 충돌한 오브젝트 자체가 리스트에 있는지 확인
+            if (obstacles.Contains(other))
+            {
+                Debug.Log($"BirdMovement: Hit obstacle in list ({other.name}) - Stopping immediately!");
+                StopBirdImmediately();
+                return;
+            }
+            
+            // 충돌한 오브젝트의 부모가 리스트에 있는지 확인
+            if (other.transform.parent != null && obstacles.Contains(other.transform.parent.gameObject))
+            {
+                Debug.Log($"BirdMovement: Hit child of obstacle in list ({other.name}) - Stopping immediately!");
+                StopBirdImmediately();
+                return;
+            }
         }
 
         // Floor 태그를 가진 오브젝트 또는 그 부모와 충돌 - 굴러가기 시작
@@ -243,9 +280,8 @@ public class BirdMovement : MonoBehaviour
             return;
         }
 
-        // obstacle, goal, floor가 아닌 다른 물체와 충돌 - 멈춤
-        Debug.Log($"BirdMovement: Hit other object ({other.name}) - Stopping bird");
-        StopBirdAndAllowReload(collision);
+        // obstacle, goal, floor가 아닌 다른 물체와 충돌 - 무시 (계속 날아감)
+        Debug.Log($"BirdMovement: Hit other object ({other.name}) - Ignoring");
     }
 
     void HandleSuccess()
@@ -388,5 +424,14 @@ public class BirdMovement : MonoBehaviour
         HideArrow();
 
         Debug.Log("Bird reset to initial position..");
+    }
+
+    void OnDestroy()
+    {
+        // Arrow 인스턴스 정리
+        if (_dragArrowInstance != null)
+        {
+            Destroy(_dragArrowInstance);
+        }
     }
 }
