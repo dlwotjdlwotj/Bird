@@ -28,6 +28,9 @@ public class BirdMovement : MonoBehaviour
     bool _isDragging;
     Vector2 _currentDragPosition;
     bool _hasLaunched;
+    bool _isOnFloor;
+    bool _isStopped;
+    float _stopVelocityThreshold = 0.2f; // 속도가 이 값 이하로 떨어지면 멈춤
 
     void Awake()
     {
@@ -58,10 +61,22 @@ public class BirdMovement : MonoBehaviour
         HandleInput();
         UpdateArrow();
 
-        // floor 아래로 떨어졌는지 확인
-        if (floor != null && transform.position.y < floor.transform.position.y - 2.5f)
+        // floor 아래로 떨어졌는지 확인 (첫 번째 floor 기준, 태그로 체크)
+        GameObject firstFloor = GameObject.FindGameObjectWithTag("Floor");
+        if (firstFloor != null && transform.position.y < firstFloor.transform.position.y - 2.5f)
         {
             HandleFailure();
+        }
+
+        // floor에 닿아서 굴러가는 중이면 속도 체크
+        if (_isOnFloor && _hasLaunched && _birdRigidbody != null && !_birdRigidbody.isKinematic)
+        {
+            float velocityMagnitude = _birdRigidbody.velocity.magnitude;
+            if (velocityMagnitude < _stopVelocityThreshold)
+            {
+                // 속도가 충분히 느려지면 멈춤
+                StopBirdOnFloor();
+            }
         }
     }
 
@@ -69,10 +84,30 @@ public class BirdMovement : MonoBehaviour
     {
         if (Input.GetMouseButtonDown(0))
         {
+            // 장애물에 부딪혀서 멈춘 상태에서 터치하면 리스타트
+            if (_isStopped)
+            {
+                ResetBirdState();
+                return;
+            }
+
+            // 멈춘 상태가 아니고 아직 발사하지 않았으면 드래그 시작
             if (!_hasLaunched && IsPointerOverBird())
             {
                 _isDragging = true;
             }
+            // 멈춘 상태가 아니지만 이미 발사했으면 현재 위치에서 다시 발사 가능
+            else if (_hasLaunched && !_isStopped)
+            {
+                // 현재 위치에서 다시 드래그 시작
+                _isDragging = true;
+                _hasLaunched = false;
+            }
+        }
+        else if (Input.GetMouseButton(0) && _isDragging)
+        {
+            // 드래그 중일 때 위치 업데이트
+            UpdateDragVector();
         }
         else if (Input.GetMouseButtonUp(0) && _isDragging)
         {
@@ -119,6 +154,15 @@ public class BirdMovement : MonoBehaviour
     void SetBirdPhysics(bool isKinematic, bool resetVelocity)
     {
         _birdRigidbody.isKinematic = isKinematic;
+        // kinematic이 아닐 때만 중력 적용
+        if (!isKinematic)
+        {
+            _birdRigidbody.gravityScale = 1f;
+        }
+        else
+        {
+            _birdRigidbody.gravityScale = 0f; // kinematic일 때는 중력 없음
+        }
         if (resetVelocity)
         {
             _birdRigidbody.velocity = Vector2.zero;
@@ -181,15 +225,32 @@ public class BirdMovement : MonoBehaviour
             return;
         }
 
-        // Obstacle과 충돌 - 실패 (재시작)
-        if (obstacles != null && obstacles.Contains(other))
+        // Obstacle 태그를 가진 오브젝트 또는 그 부모와 충돌 - 즉시 멈춤
+        if (other.CompareTag("Obstacle") || (other.transform.parent != null && other.transform.parent.CompareTag("Obstacle")))
         {
-            Debug.Log("BirdMovement: Hit obstacle - FAILURE!");
-            HandleFailure();
+            Debug.Log("BirdMovement: Hit obstacle - Stopping immediately!");
+            StopBirdImmediately();
             return;
         }
 
-        // obstacle이나 goal이 아닌 다른 물체와 충돌 - 멈춤
+        // Obstacle 리스트에 있는 오브젝트와 충돌 - 즉시 멈춤 (기존 호환성)
+        if (obstacles != null && obstacles.Contains(other))
+        {
+            Debug.Log("BirdMovement: Hit obstacle - Stopping immediately!");
+            StopBirdImmediately();
+            return;
+        }
+
+        // Floor 태그를 가진 오브젝트 또는 그 부모와 충돌 - 굴러가기 시작
+        if (other.CompareTag("Floor") || (other.transform.parent != null && other.transform.parent.CompareTag("Floor")))
+        {
+            Debug.Log("BirdMovement: Hit floor - Bird will roll");
+            _isOnFloor = true;
+            // 물리 시뮬레이션은 계속 유지 (굴러가도록)
+            return;
+        }
+
+        // obstacle, goal, floor가 아닌 다른 물체와 충돌 - 멈춤
         Debug.Log($"BirdMovement: Hit other object ({other.name}) - Stopping bird");
         StopBirdAndAllowReload(collision);
     }
@@ -204,6 +265,52 @@ public class BirdMovement : MonoBehaviour
     {
         Debug.Log("Bird hit an obstacle or fell: Restarting.");
         ResetBirdState();
+    }
+
+    void StopBirdImmediately()
+    {
+        // 새를 즉시 멈춤
+        if (_birdRigidbody != null)
+        {
+            _birdRigidbody.velocity = Vector2.zero;
+            _birdRigidbody.angularVelocity = 0f;
+        }
+
+        _isDragging = false;
+        _hasLaunched = false;
+        _isOnFloor = false;
+        _isStopped = true;
+
+        // 새를 kinematic으로 변경하여 멈춤
+        SetBirdPhysics(isKinematic: true, resetVelocity: true);
+
+        HideArrow();
+
+        Debug.Log("Bird stopped. Touch to restart.");
+    }
+
+    void StopBirdOnFloor()
+    {
+        if (_birdRigidbody == null) return;
+
+        // 새를 멈춤
+        _birdRigidbody.velocity = Vector2.zero;
+        _birdRigidbody.angularVelocity = 0f;
+
+        // 현재 위치를 새로운 시작 위치로 설정
+        _isDragging = false;
+        _hasLaunched = false;
+        _isOnFloor = false;
+        _isStopped = false; // floor에서 멈춘 경우는 리셋 안 함, 다시 발사 가능
+        _startPosition = transform.position;
+        _currentDragPosition = _startPosition;
+
+        // 새를 kinematic으로 변경하여 멈춤
+        SetBirdPhysics(isKinematic: true, resetVelocity: true);
+
+        HideArrow();
+
+        Debug.Log("Bird stopped on floor. Can launch again from current position.");
     }
 
     void StopBirdAndAllowReload(Collision2D collision)
@@ -248,6 +355,8 @@ public class BirdMovement : MonoBehaviour
         // 현재 위치를 새로운 시작 위치로 설정
         _isDragging = false;
         _hasLaunched = false;
+        _isOnFloor = false;
+        _isStopped = true;
         _startPosition = newPosition;
         _currentDragPosition = _startPosition;
 
@@ -256,7 +365,7 @@ public class BirdMovement : MonoBehaviour
 
         HideArrow();
 
-        Debug.Log("Bird stopped. Ready to launch again from current position.");
+        Debug.Log("Bird stopped. Touch to restart.");
     }
 
     Vector2 FindSafePosition(Vector2 contactPoint, Vector2 normal, float minDistance, GameObject collisionObject)
@@ -275,6 +384,8 @@ public class BirdMovement : MonoBehaviour
         
         _isDragging = false;
         _hasLaunched = false;
+        _isOnFloor = false;
+        _isStopped = false;
         _currentDragPosition = _startPosition;
 
         transform.position = _startPosition;
@@ -282,5 +393,7 @@ public class BirdMovement : MonoBehaviour
 
         SetBirdPhysics(isKinematic: true, resetVelocity: true);
         HideArrow();
+
+        Debug.Log("Bird reset to initial position..");
     }
 }

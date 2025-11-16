@@ -5,7 +5,7 @@ using UnityEngine;
 public class CameraMovement : MonoBehaviour
 {
     [Header("Target Settings")]
-    [Tooltip("The bird object to follow.")]
+    [Tooltip("The bird object to follow..")]
     public Transform birdTarget;
 
     void Start()
