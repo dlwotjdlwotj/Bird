@@ -96,13 +96,6 @@ public class BirdMovement : MonoBehaviour
             {
                 _isDragging = true;
             }
-            // 멈춘 상태가 아니지만 이미 발사했으면 현재 위치에서 다시 발사 가능
-            else if (_hasLaunched && !_isStopped)
-            {
-                // 현재 위치에서 다시 드래그 시작
-                _isDragging = true;
-                _hasLaunched = false;
-            }
         }
         else if (Input.GetMouseButton(0) && _isDragging)
         {
