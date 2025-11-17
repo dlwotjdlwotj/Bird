@@ -361,7 +361,7 @@ GameObject:
   - component: {fileID: 714361574}
   m_Layer: 0
   m_Name: StageWall
-  m_TagString: Untagged
+  m_TagString: Obstacle
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -402,7 +402,7 @@ GameObject:
   - component: {fileID: 1096488178}
   m_Layer: 0
   m_Name: Wall (1)
-  m_TagString: Untagged
+  m_TagString: Obstacle
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -479,7 +479,7 @@ GameObject:
   - component: {fileID: 1225833559}
   m_Layer: 0
   m_Name: Wall (2)
-  m_TagString: Untagged
+  m_TagString: Obstacle
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -785,7 +785,7 @@ GameObject:
   - component: {fileID: 1872804613}
   m_Layer: 0
   m_Name: Wall (3)
-  m_TagString: Untagged
+  m_TagString: Obstacle
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -924,7 +924,7 @@ GameObject:
   - component: {fileID: 1961715939}
   m_Layer: 0
   m_Name: Wall (4)
-  m_TagString: Untagged
+  m_TagString: Obstacle
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -1195,6 +1195,10 @@ PrefabInstance:
       propertyPath: goal
       value: 
       objectReference: {fileID: 2017654521}
+    - target: {fileID: 8754258083685785628, guid: 28a03f774b8000045ae613a88536c90a, type: 3}
+      propertyPath: successSprite
+      value: 
+      objectReference: {fileID: 21300000, guid: 07291402fb90fa342ae22ffd48c7ebbf, type: 3}
     - target: {fileID: 8754258083685785628, guid: 28a03f774b8000045ae613a88536c90a, type: 3}
       propertyPath: dragArrowPrefab
       value: 
