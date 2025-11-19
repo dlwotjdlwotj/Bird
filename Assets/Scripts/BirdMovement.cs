@@ -5,8 +5,6 @@ using UnityEngine;
 public class BirdMovement : MonoBehaviour
 {
     [Header("References")]
-    public List<GameObject> obstacles;
-    public GameObject goal;
 
     public float safeDistance = 0.3f;
 
@@ -42,7 +40,7 @@ public class BirdMovement : MonoBehaviour
     Vector2 _currentDragPosition;
     bool _hasLaunched;
     bool _isOnFloor;
-    bool _isStopped;
+    bool _isFailed;
     bool _isSuccess; // 성공 상태 플래그
     float _stopVelocityThreshold = 0.2f; // 속도가 이 값 이하로 떨어지면 멈춤
     
@@ -53,13 +51,6 @@ public class BirdMovement : MonoBehaviour
     void Awake()
     {
         _birdRigidbody = GetComponent<Rigidbody2D>();
-        if (_birdRigidbody == null)
-        {
-            _birdRigidbody = gameObject.AddComponent<Rigidbody2D>();
-        }
-        
-        // 마찰력 Material 적용
-        ApplyFrictionMaterial();
     }
 
     void Start()
@@ -67,7 +58,7 @@ public class BirdMovement : MonoBehaviour
         _startPosition = transform.position;
         _initialPosition = transform.position;
         _currentDragPosition = _startPosition;
-        SetBirdPhysics(isKinematic: true, resetVelocity: true);
+        SetBirdPhysics(isKinematic: true, resetVelocity: true); // 새 공중에 고정
 
         // Arrow prefab 인스턴스 생성
         if (dragArrowPrefab != null)
@@ -83,10 +74,9 @@ public class BirdMovement : MonoBehaviour
         UpdateArrow();
 
         // floor에 닿아서 굴러가는 중이면 속도 체크
-        if (_isOnFloor && _hasLaunched && _birdRigidbody != null && !_birdRigidbody.isKinematic)
+        if (_isOnFloor && _hasLaunched && !_birdRigidbody.isKinematic)
         {
-            float velocityMagnitude = _birdRigidbody.velocity.magnitude;
-            if (velocityMagnitude < _stopVelocityThreshold)
+            if (_birdRigidbody.velocity.magnitude < _stopVelocityThreshold)
             {
                 // 속도가 충분히 느려지면 멈춤
                 StopBirdOnFloor();
@@ -94,12 +84,52 @@ public class BirdMovement : MonoBehaviour
         }
     }
 
+    void OnCollisionEnter2D(Collision2D collision)
+    {
+        GameObject other = collision.gameObject;
+
+        // 자식 오브젝트와의 충돌은 무시 (애니메이션 프리팹)
+        if (other.transform.IsChildOf(transform))
+        {
+            return;
+        }
+
+        // goal와 충돌 - 성공 (goal 자체 또는 goal의 자식과 충돌)
+        if (IsFinish(other))
+        {
+            Debug.Log($"BirdMovement: Hit goal ({other.name}) - SUCCESS!");
+            HandleSuccess();
+            return;
+        }
+
+        // Obstacle 태그를 가진 오브젝트 또는 모든 부모 계층에서 확인 - 실패 처리
+        if (IsObstacle(other))
+        {
+            Debug.Log($"BirdMovement: Hit obstacle (by tag) - {other.name} - FAILURE!");
+            StopBirdImmediately();
+            HandleFailure();
+            return;
+        }
+
+        // Floor 태그를 가진 오브젝트 확인- 굴러가기 시작
+        if (IsFloor(other))
+        {
+            Debug.Log("BirdMovement: Hit floor - Bird will roll");
+            _isOnFloor = true;
+            // 물리 시뮬레이션은 계속 유지 (굴러가도록)
+            return;
+        }
+
+        // obstacle, goal, floor가 아닌 다른 물체와 충돌 - 무시 (계속 날아감)
+        Debug.Log($"BirdMovement: Hit other object ({other.name}) - Ignoring");
+    }
+
     void HandleInput()
     {
         if (Input.GetMouseButtonDown(0))
         {
             // 장애물에 부딪혀서 멈춘 상태 또는 성공 상태에서 터치하면 리스타트
-            if (_isStopped || _isSuccess)
+            if (_isFailed || _isSuccess)
             {
                 ResetBirdState();
                 return;
@@ -111,24 +141,37 @@ public class BirdMovement : MonoBehaviour
                 _isDragging = true;
             }
         }
-        else if (Input.GetMouseButton(0) && _isDragging)
+        else if (Input.GetMouseButton(0) && _isDragging) // 드래그 중
         {
             // 드래그 중일 때 위치 업데이트
             UpdateDragVector();
         }
-        else if (Input.GetMouseButtonUp(0) && _isDragging)
+        else if (Input.GetMouseButtonUp(0) && _isDragging) // 드래그 후 마우스 뗌
         {
             ReleaseBird();
         }
     }
 
-    void UpdateDragVector()
+    // 마우스가 새 쪽인지 확인
+    bool IsPointerOverBird()
     {
         Vector3 pointerWorldPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
         pointerWorldPos.z = 0f;
-        Vector2 desiredPosition = pointerWorldPos;
+        Collider2D hit = Physics2D.OverlapPoint(pointerWorldPos);
+        
+        if (hit == null) return false;
+        
+        // Bird 자체를 클릭했거나, Bird의 자식을 클릭한 경우 true
+        return hit.gameObject == gameObject || hit.transform.IsChildOf(transform);
+    }
 
-        Vector2 directionFromStart = desiredPosition - _startPosition;
+    void UpdateDragVector()
+    {
+        Vector3 pointerWorldPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+        Vector2 pointerWorldPosXY = pointerWorldPos;
+
+        Vector2 directionFromStart = pointerWorldPosXY - _startPosition;
+        // 최대 드래그 거리 초과 방지
         if (directionFromStart.magnitude > maxDragDistance)
         {
             directionFromStart = directionFromStart.normalized * maxDragDistance;
@@ -143,23 +186,11 @@ public class BirdMovement : MonoBehaviour
         _hasLaunched = true;
         SetBirdPhysics(isKinematic: false, resetVelocity: true);
 
-        Vector2 releaseDirection = _startPosition - _currentDragPosition;
-        _birdRigidbody.velocity = releaseDirection * launchPower;
+        Vector2 releaseVector = _startPosition - _currentDragPosition;
+        _birdRigidbody.velocity = releaseVector * launchPower;
 
         _currentDragPosition = _startPosition;
         HideArrow();
-    }
-
-    bool IsPointerOverBird()
-    {
-        Vector3 pointerWorldPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
-        pointerWorldPos.z = 0f;
-        Collider2D hit = Physics2D.OverlapPoint(pointerWorldPos);
-        
-        if (hit == null) return false;
-        
-        // Bird 자체를 클릭했거나, Bird의 자식을 클릭한 경우 true
-        return hit.gameObject == gameObject || hit.transform.IsChildOf(transform);
     }
 
     void SetBirdPhysics(bool isKinematic, bool resetVelocity)
@@ -173,7 +204,7 @@ public class BirdMovement : MonoBehaviour
             _birdRigidbody.drag = linearDrag;
             _birdRigidbody.angularDrag = angularDrag;
         }
-        else
+        else // 게임 시작 시 공중에 멈춰있음
         {
             _birdRigidbody.gravityScale = 0f; // kinematic일 때는 중력 없음
             _birdRigidbody.drag = 0f; // kinematic일 때는 마찰력 없음
@@ -186,56 +217,30 @@ public class BirdMovement : MonoBehaviour
         }
     }
 
-    void ApplyFrictionMaterial()
-    {
-        // Collider에 Physics Material 2D 적용
-        Collider2D collider = GetComponent<Collider2D>();
-        if (collider != null)
-        {
-            if (frictionMaterial != null)
-            {
-                collider.sharedMaterial = frictionMaterial;
-            }
-            else
-            {
-                // 기본 마찰력 Material이 없으면 생성
-                PhysicsMaterial2D defaultMaterial = new PhysicsMaterial2D("BirdFriction");
-                defaultMaterial.friction = 0.4f; // 기본 마찰 계수
-                defaultMaterial.bounciness = 0.1f; // 약간의 탄성
-                collider.sharedMaterial = defaultMaterial;
-            }
-        }
-    }
-
     void UpdateArrow()
     {
-        if (_dragArrowInstance == null)
-        {
-            return;
-        }
-
-        if (_isDragging)
+        if (_isDragging) // 드래그 중
         {
             UpdateDragVector();
         }
 
         if (_isDragging)
         {
-            Vector2 releaseDirection = _startPosition - _currentDragPosition;
-            if (releaseDirection.sqrMagnitude > Mathf.Epsilon)
+            Vector2 arrowVector = _startPosition - _currentDragPosition;
+            if (arrowVector.sqrMagnitude > Mathf.Epsilon) // 0 초과
             {
                 _dragArrowInstance.SetActive(true);
                 
-                // 화살표 크기를 드래그 거리에 비례하여 조정 (Y축으로 늘어남)
-                float distance = releaseDirection.magnitude * arrowScale;
+                // 화살표 크기를 드래그 거리에 비례하여 조정 (Y축(화살표 방향)으로 늘어남)
+                float distance = arrowVector.magnitude * arrowScale;
                 _dragArrowInstance.transform.localScale = new Vector3(1f, distance, 1f);
                 
                 // 화살표가 발사 방향을 가리키도록 회전 (위쪽이 기본 방향이므로 -90도 보정)
-                float angle = Mathf.Atan2(releaseDirection.y, releaseDirection.x) * Mathf.Rad2Deg - 90f;
+                float angle = Mathf.Atan2(arrowVector.y, arrowVector.x) * Mathf.Rad2Deg - 90f;
                 _dragArrowInstance.transform.rotation = Quaternion.Euler(0, 0, angle);
                 
                 // 화살표 바닥이 새 위치에 오도록 설정 (화살표 중심을 위로 이동)
-                Vector2 arrowOffset = releaseDirection.normalized * (distance * 0.5f);
+                Vector2 arrowOffset = arrowVector.normalized * (distance * 0.5f);
                 _dragArrowInstance.transform.position = new Vector3(
                     _startPosition.x + arrowOffset.x,
                     _startPosition.y + arrowOffset.y,
@@ -255,134 +260,28 @@ public class BirdMovement : MonoBehaviour
 
     void HideArrow()
     {
-        if (_dragArrowInstance != null)
-        {
-            _dragArrowInstance.SetActive(false);
-        }
+        _dragArrowInstance.SetActive(false);
     }
 
-    void OnCollisionEnter2D(Collision2D collision)
+    // Finish 태그를 가진 오브젝트인지 확인
+    bool IsFinish(GameObject obj)
     {
-        GameObject other = collision.gameObject;
-        Debug.Log($"[COLLISION] {gameObject.name} collided with {other.name}");
-
-        // 자식 오브젝트와의 충돌은 무시 (애니메이션 프리팹)
-        if (other.transform.IsChildOf(transform))
-        {
-            Debug.Log("BirdMovement: Collision with child object - Ignoring");
-            return;
-        }
-
-        // goal와 충돌 - 성공 (goal 자체 또는 goal의 자식과 충돌)
-        if (IsGoal(other))
-        {
-            Debug.Log($"BirdMovement: Hit goal ({other.name}) - SUCCESS!");
-            HandleSuccess();
-            return;
-        }
-
-        // Obstacle 태그를 가진 오브젝트 또는 모든 부모 계층에서 확인 - 실패 처리
-        if (IsObstacleTagged(other))
-        {
-            Debug.Log($"BirdMovement: Hit obstacle (by tag) - {other.name} - FAILURE!");
-            StopBirdImmediately();
-            HandleFailure();
-            return;
-        }
-
-        // Obstacle 리스트에 있는 오브젝트와 충돌 - 실패 처리 (기존 호환성)
-        if (obstacles != null && obstacles.Count > 0)
-        {
-            // 충돌한 오브젝트 자체가 리스트에 있는지 확인
-            if (obstacles.Contains(other))
-            {
-                Debug.Log($"BirdMovement: Hit obstacle in list ({other.name}) - FAILURE!");
-                StopBirdImmediately();
-                HandleFailure();
-                return;
-            }
-            
-            // 충돌한 오브젝트의 모든 부모 계층을 확인
-            Transform current = other.transform.parent;
-            while (current != null)
-            {
-                if (obstacles.Contains(current.gameObject))
-                {
-                    Debug.Log($"BirdMovement: Hit child of obstacle in list ({other.name}, parent: {current.name}) - FAILURE!");
-                    StopBirdImmediately();
-                    HandleFailure();
-                    return;
-                }
-                current = current.parent;
-            }
-        }
-
-        // Floor 태그를 가진 오브젝트 또는 모든 부모 계층에서 확인 - 굴러가기 시작
-        if (IsFloorTagged(other))
-        {
-            Debug.Log("BirdMovement: Hit floor - Bird will roll");
-            _isOnFloor = true;
-            // 물리 시뮬레이션은 계속 유지 (굴러가도록)
-            return;
-        }
-
-        // obstacle, goal, floor가 아닌 다른 물체와 충돌 - 무시 (계속 날아감)
-        Debug.Log($"BirdMovement: Hit other object ({other.name}) - Ignoring");
+        if(obj.CompareTag("Finish")) return true;
+        else return false;
     }
 
-    // goal 오브젝트인지 확인 (goal 자체 또는 goal의 자식인지)
-    bool IsGoal(GameObject obj)
+    // Obstacle 태그를 가진 오브젝트인지 확인
+    bool IsObstacle(GameObject obj)
     {
-        if (goal == null) return false;
-        
-        // 충돌한 오브젝트가 goal 자체인지 확인
-        if (obj == goal)
-        {
-            return true;
-        }
-        
-        // 충돌한 오브젝트의 모든 부모 계층을 확인
-        Transform current = obj.transform.parent;
-        while (current != null)
-        {
-            if (current.gameObject == goal)
-            {
-                return true;
-            }
-            current = current.parent;
-        }
-        
-        return false;
+        if(obj.CompareTag("Obstacle")) return true;
+        else return false;
     }
 
-    // Obstacle 태그를 가진 오브젝트인지 모든 부모 계층을 확인
-    bool IsObstacleTagged(GameObject obj)
+    // Floor 태그를 가진 오브젝트인지 확인
+    bool IsFloor(GameObject obj)
     {
-        Transform current = obj.transform;
-        while (current != null)
-        {
-            if (current.CompareTag("Obstacle"))
-            {
-                return true;
-            }
-            current = current.parent;
-        }
-        return false;
-    }
-
-    // Floor 태그를 가진 오브젝트인지 모든 부모 계층을 확인
-    bool IsFloorTagged(GameObject obj)
-    {
-        Transform current = obj.transform;
-        while (current != null)
-        {
-            if (current.CompareTag("Floor"))
-            {
-                return true;
-            }
-            current = current.parent;
-        }
-        return false;
+        if(obj.CompareTag("Floor")) return true;
+        else return false;
     }
 
     void HandleSuccess()
@@ -399,7 +298,7 @@ public class BirdMovement : MonoBehaviour
         _isDragging = false;
         _hasLaunched = false;
         _isOnFloor = false;
-        _isStopped = false;
+        _isFailed = false;
         _isSuccess = true; // 성공 상태로 설정
 
         // 새를 kinematic으로 변경하여 멈춤
@@ -496,7 +395,7 @@ public class BirdMovement : MonoBehaviour
         _isDragging = false;
         _hasLaunched = false;
         _isOnFloor = false;
-        _isStopped = true;
+        _isFailed = true;
 
         // 새를 kinematic으로 변경하여 멈춤
         SetBirdPhysics(isKinematic: true, resetVelocity: true);
@@ -518,7 +417,7 @@ public class BirdMovement : MonoBehaviour
         _isDragging = false;
         _hasLaunched = false;
         _isOnFloor = false;
-        _isStopped = false; // floor에서 멈춘 경우는 리셋 안 함, 다시 발사 가능
+        _isFailed = false; // floor에서 멈춘 경우는 리셋 안 함, 다시 발사 가능
         _startPosition = transform.position;
         _currentDragPosition = _startPosition;
 
@@ -530,71 +429,7 @@ public class BirdMovement : MonoBehaviour
         Debug.Log("Bird stopped on floor. Can launch again from current position.");
     }
 
-    void StopBirdAndAllowReload(Collision2D collision)
-    {
-        // 새를 멈춤
-        if (_birdRigidbody != null)
-        {
-            _birdRigidbody.velocity = Vector2.zero;
-            _birdRigidbody.angularVelocity = 0f;
-        }
-
-        // 충돌 방향 계산
-        Vector2 collisionNormal = Vector2.zero;
-        Vector2 contactPoint = Vector2.zero;
-        if (collision.contacts.Length > 0)
-        {
-            collisionNormal = collision.contacts[0].normal;
-            contactPoint = collision.contacts[0].point;
-        }
-
-        // 새의 Collider 크기 계산
-        Collider2D birdCollider = GetComponent<Collider2D>();
-        float colliderRadius = 0.5f; // 기본값
-        if (birdCollider != null)
-        {
-            if (birdCollider is CircleCollider2D)
-            {
-                colliderRadius = ((CircleCollider2D)birdCollider).radius;
-            }
-            else if (birdCollider is BoxCollider2D)
-            {
-                colliderRadius = Mathf.Max(((BoxCollider2D)birdCollider).size.x, ((BoxCollider2D)birdCollider).size.y) * 0.5f;
-            }
-        }
-
-        
-        // 충돌한 물체 방향으로 Raycast를 쏴서 안전한 위치 찾기
-        Vector2 newPosition = FindSafePosition(contactPoint, collisionNormal, safeDistance, collision.gameObject);
-
-        transform.position = newPosition;
-
-        // 현재 위치를 새로운 시작 위치로 설정
-        _isDragging = false;
-        _hasLaunched = false;
-        _isOnFloor = false;
-        _isStopped = true;
-        _startPosition = newPosition;
-        _currentDragPosition = _startPosition;
-
-        // 새를 kinematic으로 변경하여 멈춤
-        SetBirdPhysics(isKinematic: true, resetVelocity: true);
-
-        HideArrow();
-
-        Debug.Log("Bird stopped. Touch to restart.");
-    }
-
-    Vector2 FindSafePosition(Vector2 contactPoint, Vector2 normal, float minDistance, GameObject collisionObject)
-    {
-        // 장애물 반대 방향(normal)으로 일정 거리 떨어진 위치에 배치
-        // 충분한 안전 거리 확보 (collider 크기의 2배)
-        float safeDistance = minDistance * 2f;
-        Vector2 safePosition = contactPoint + normal * safeDistance;
-        
-        return safePosition;
-    }
-
+    // 게임 성공 or 실패
     void ResetBirdState()
     {
         _startPosition = _initialPosition;
@@ -602,11 +437,11 @@ public class BirdMovement : MonoBehaviour
         _isDragging = false;
         _hasLaunched = false;
         _isOnFloor = false;
-        _isStopped = false;
+        _isFailed = false;
         _isSuccess = false; // 성공 상태 리셋
-        _currentDragPosition = _startPosition;
+        _currentDragPosition = _initialPosition;
 
-        transform.position = _startPosition;
+        transform.position = _initialPosition;
         transform.rotation = Quaternion.identity;
 
         SetBirdPhysics(isKinematic: true, resetVelocity: true);
